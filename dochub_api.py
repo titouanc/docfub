@@ -59,8 +59,3 @@ class DochubAPI(requests.Session):
         logger.info("Download document %d", doc_id)
         api_path = "/documents/{doc_id}/original".format(doc_id=doc_id)
         return self.get(api_path).content
-
-
-if __name__ == "__main__":
-    api = DochubAPI()
-    print(api.get_tree())
