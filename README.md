@@ -19,11 +19,12 @@ pip install -r requirements-frozen.txt
 
 ```bash
 grep -v IGNORE config.py > local_config.py
-nano local_config
+nano local_config.py
 ```
 
 ### Run
 
 ```bash
-python fs.py
+mkdir DOCHUB
+python docfub.py DOCHUB
 ```
