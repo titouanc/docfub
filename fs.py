@@ -1,9 +1,13 @@
 import os
 import errno
 import stat
+import logging
 from time import time, mktime, strptime
 
 from fuse import FuseOSError, Operations, LoggingMixIn
+
+
+logger = logging.getLogger('dochub_fs')
 
 def wrap_enoent(func):
     """
