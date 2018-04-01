@@ -1,5 +1,8 @@
 import logging
+import platform
 import requests
+
+from version import VERSION
 
 logger = logging.getLogger("dochub_api")
 
@@ -18,6 +21,11 @@ class DochubAPI(requests.Session):
         self.base_url = base_url
         super(DochubAPI, self).__init__(*args, **kwargs)
         self.headers['Authorization'] = 'Token ' + token
+        self.headers['User-Agent'] = 'docfub {version} {os}{arch}'.format(
+            version=VERSION,
+            os=platform.system(),
+            arch=platform.machine(),
+        )
 
     def post(self, path, *args, **kwargs):
         full_url = self.base_url + path
