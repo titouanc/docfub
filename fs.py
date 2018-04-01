@@ -2,6 +2,7 @@ import os
 import errno
 import stat
 import logging
+from io import BytesIO
 from time import time, mktime, strptime
 
 from fuse import FuseOSError, Operations, LoggingMixIn
@@ -73,7 +74,7 @@ class Node:
     mtime = ctime
 
     def stat(self):
-        mode = (0o755|stat.S_IFDIR) if self.is_dir else (0o644|stat.S_IFREG)
+        mode = (0o500|stat.S_IFDIR) if self.is_dir else (0o400|stat.S_IFREG)
         return {
             'st_mode': mode,
             'st_ctime': self.ctime,
@@ -117,6 +118,48 @@ class Node:
             return self
 
 
+class DocumentUpload:
+    def __init__(self, fs, course, name):
+        self.fs = fs
+        self.io = BytesIO()
+        self.ctime = time()
+        self.mtime, self.atime = self.ctime, self.ctime
+        self.name, self.ext = name.split('.', 1)
+        self.course = course
+
+    @property
+    def size(self):
+        return self.io.tell()
+
+    def stat(self):
+        return {
+            'st_mode': 0o200 | stat.S_IFREG,
+            'st_ctime': self.ctime,
+            'st_mtime': self.mtime,
+            'st_atime': self.atime,
+            'st_nlink': 1,
+            'st_uid': self.fs.uid,
+            'st_gid': self.fs.gid,
+            'st_size': self.size,
+        }
+
+    def do_upload(self):
+        self.io.seek(0)
+        self.fs.api.add_document(course_slug=self.course.serialized['slug'],
+                                 name=self.name, file=self.io,
+                                 filename='.'.join([self.name, self.ext]))
+
+
+def to_breadcrumbs(path):
+    res = []
+    prefix, name = os.path.split(path)
+    while name:
+        res = [name] + res
+        prefix, name = os.path.split(prefix)
+    return res
+
+
+
 class DochubFileSystem(LoggingMixIn, Operations):
     """
     @brief      Implementation of filesystem operations
@@ -125,6 +168,7 @@ class DochubFileSystem(LoggingMixIn, Operations):
         self.api = api
         self.mount_time = int(time())
         self.uid, self.gid = os.getuid(), os.getgid()
+        self.uploads = {}
 
         tree = self.api.get_tree()
         assert len(tree) == 1
@@ -132,8 +176,9 @@ class DochubFileSystem(LoggingMixIn, Operations):
 
     @wrap_enoent
     def find_path(self, path):
-        components = [x for x in path.strip('/').split('/') if x != '']
-        return self.tree.find(components)
+        if path in self.uploads:
+            return self.uploads[path]
+        return self.tree.find(to_breadcrumbs(path))
 
     def getattr(self, path, fh=None):
         return self.find_path(path).stat()
@@ -145,3 +190,32 @@ class DochubFileSystem(LoggingMixIn, Operations):
     def read(self, path, size, offset, fh=None):
         node = self.find_path(path)
         return node.content[offset:offset+size]
+
+    def create(self, path, mode):
+        directory, name = os.path.split(path)
+        parent = self.find_path(directory)
+        if not parent.is_course:
+            raise Exception()
+
+        if (mode & stat.S_IFREG):
+            logger.info("Create file %s", path)
+            self.uploads[path] = DocumentUpload(self, parent, name)
+        return 42
+
+    def open(self, path, flags):
+        return 42
+
+    def release(self, path, fh):
+        if path in self.uploads and self.uploads[path].size > 0:
+            upload = self.uploads.pop(path)
+            upload.do_upload()
+            logger.debug("Flush buffer %s (%skiB)",
+                         path, round(upload.size/1024., 1))
+
+    def write(self, path, data, offset, fh=None):
+        if path in self.uploads:
+            upload = self.uploads[path]
+            if offset != upload.size:
+                upload.io.seek(offset)
+            self.uploads[path].io.write(data)
+            return len(data)
