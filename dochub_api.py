@@ -14,26 +14,13 @@ def memoize(func):
 
 
 class DochubAPI(requests.Session):
-    def __init__(self, base_url, username, password, *args, **kwargs):
-        self.courses_cache = {}
+    def __init__(self, token, base_url, *args, **kwargs):
         self.base_url = base_url
         super(DochubAPI, self).__init__(*args, **kwargs)
-        self.get('/syslogin')
-        self.post("/syslogin", data={
-            'username': username,
-            'password': password,
-        })
-
-    @property
-    def _csrf(self):
-        for key, val in getattr(self, 'cookies', {}).items():
-            if 'csrf' in key:
-                return val
+        self.headers['Authorization'] = 'Token ' + token
 
     def post(self, path, *args, **kwargs):
         full_url = self.base_url + path
-        if 'data' in kwargs and self._csrf:
-            kwargs['data']['csrfmiddlewaretoken'] = self._csrf
         r = super(DochubAPI, self).post(full_url, *args, **kwargs)
         r.raise_for_status()
         return r
@@ -46,7 +33,7 @@ class DochubAPI(requests.Session):
 
     def get_tree(self):
         logger.info("Download site tree")
-        return self.get("/catalog/course_tree.json").json()
+        return self.get("/api/tree/").json()
 
     @memoize
     def get_course(self, slug):
@@ -57,5 +44,5 @@ class DochubAPI(requests.Session):
     @memoize
     def get_document(self, doc_id):
         logger.info("Download document %d", doc_id)
-        api_path = "/documents/{doc_id}/original".format(doc_id=doc_id)
+        api_path = "/api/documents/{doc_id}/original/".format(doc_id=doc_id)
         return self.get(api_path).content
