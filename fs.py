@@ -10,15 +10,18 @@ from fuse import FuseOSError, Operations, LoggingMixIn
 
 logger = logging.getLogger('dochub_fs')
 
-def wrap_enoent(func):
+def wrap_errno(func):
     """
-    @brief      Transform KeyErrors happening inside func into ENOENT
+    @brief      Transform Exceptions happening inside func into meaningful
+                errno if possible
     """
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except KeyError:
             raise FuseOSError(errno.ENOENT)
+        except ValueError:
+            raise FuseOSError(errno.EINVAL)
     return wrapper
 
 
@@ -73,7 +76,7 @@ class Node:
     atime = ctime
     mtime = ctime
 
-    def stat(self):
+    def getattr(self):
         mode = (0o500|stat.S_IFDIR) if self.is_dir else (0o400|stat.S_IFREG)
         return {
             'st_mode': mode,
@@ -119,6 +122,10 @@ class Node:
 
 
 class DocumentUpload:
+    """
+    @brief      A file created locally, being buffered before posting to the
+                server. 
+    """
     def __init__(self, fs, course, name):
         self.fs = fs
         self.io = BytesIO()
@@ -131,7 +138,7 @@ class DocumentUpload:
     def size(self):
         return self.io.tell()
 
-    def stat(self):
+    def getattr(self):
         return {
             'st_mode': 0o200 | stat.S_IFREG,
             'st_ctime': self.ctime,
@@ -174,14 +181,14 @@ class DochubFileSystem(LoggingMixIn, Operations):
         assert len(tree) == 1
         self.tree = Node(tree[0], self)
 
-    @wrap_enoent
+    @wrap_errno
     def find_path(self, path):
         if path in self.uploads:
             return self.uploads[path]
         return self.tree.find(to_breadcrumbs(path))
 
     def getattr(self, path, fh=None):
-        return self.find_path(path).stat()
+        return self.find_path(path).getattr()
 
     def readdir(self, path, fh=None):
         node = self.find_path(path)
@@ -200,17 +207,15 @@ class DochubFileSystem(LoggingMixIn, Operations):
         if (mode & stat.S_IFREG):
             logger.info("Create file %s", path)
             self.uploads[path] = DocumentUpload(self, parent, name)
-        return 42
-
-    def open(self, path, flags):
-        return 42
+        return 3
 
     def release(self, path, fh):
+        """
+        @brief      When the file is closed, perform the actual upload to DocHub
+        """
         if path in self.uploads and self.uploads[path].size > 0:
             upload = self.uploads.pop(path)
             upload.do_upload()
-            logger.debug("Flush buffer %s (%skiB)",
-                         path, round(upload.size/1024., 1))
 
     def write(self, path, data, offset, fh=None):
         if path in self.uploads:
@@ -219,3 +224,4 @@ class DochubFileSystem(LoggingMixIn, Operations):
                 upload.io.seek(offset)
             self.uploads[path].io.write(data)
             return len(data)
+        return -1

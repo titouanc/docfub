@@ -37,13 +37,13 @@ class DochubAPI(requests.Session):
         logger.info("Download site tree")
         return self.get("/api/tree/").json()
 
-    @functools.lru_cache(maxsize=128)
+    @functools.lru_cache(maxsize=256)
     def get_course(self, slug):
         logger.info("Download course page %s", slug)
         api_path = "/api/courses/{slug}/".format(slug=slug)
         return self.get(api_path).json()
 
-    @functools.lru_cache(maxsize=128)
+    @functools.lru_cache(maxsize=64)
     def get_document(self, doc_id):
         logger.info("Download document %d", doc_id)
         api_path = "/api/documents/{doc_id}/original/".format(doc_id=doc_id)
@@ -60,5 +60,9 @@ class DochubAPI(requests.Session):
         except:
             logger.exception("Upload document %s in %s", name, course_slug)
             raise
+
+        # We modified the course, so we need to evict its cache.
+        # functools.clear_cache currently does not allow to evict a single
+        # entry, therefore we have to clear everything
         self.get_course.cache_clear()
         return res
